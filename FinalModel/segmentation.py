@@ -339,5 +339,5 @@ for index, imageFile in enumerate(imageFiles):
                                     file_name=baseName + ".jpg",
                                     )
 
-json_file = open(os.path.join(outputDir, "coco_anno.json"), 'w')
+json_file = open(os.path.join(outputDir, "annotations.json"), 'w')
 json.dump(coco_output, json_file)
