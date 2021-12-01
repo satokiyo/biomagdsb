@@ -14,6 +14,7 @@ biomag-kaggle/src/7_styaug/glob_vars.py
 biomag-kaggle/*.mat
 biomag-kaggle/HTMLresults
 Mask_RCNN-2.1/
+kaggle_workflow
 kaggle_workflow/inputs/clustering/DB.mat
 kaggle_workflow/inputs/test1/
 kaggle_workflow/inputs/train_maskrcnn/
