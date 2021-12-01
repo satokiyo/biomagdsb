@@ -1,6 +1,7 @@
 
 #disable or enable this if you have oom problems
 import tensorflow
+#config = tensorflow.ConfigProto(device_count = {'GPU': 0})
 config = tensorflow.ConfigProto()
 config.gpu_options.allow_growth = True
 session = tensorflow.Session(config=config)
@@ -16,8 +17,11 @@ import sys
 import os
 import skimage.morphology
 import json
+import scipy
 import utils
 import visualize
+#import pycococreatortools
+from pycococreatortools import pycococreatortools
 
 
 class Segmentation:
@@ -26,6 +30,7 @@ class Segmentation:
     __mModelDir = ""
     __mModelPath = ""
     __mLastMaxDim = mask_rcnn_additional.NucleiConfig().IMAGE_MAX_DIM
+    __mLastMaxDim  = 1024
     __mConfidence = 0.5
     __NMSThreshold = 0.35
 
@@ -68,7 +73,7 @@ class Segmentation:
             self.__mConfig.IMAGE_MAX_DIM = self.__mLastMaxDim
             self.__mConfig.IMAGE_MIN_DIM = self.__mLastMaxDim
             self.__mConfig.DETECTION_MAX_INSTANCES=self.__mMaxDetNum
-            self.__mConfig.__init__()
+            #self.__mConfig.__init__()
 
             self.__mModel = model.MaskRCNN(mode="inference", config=self.__mConfig, model_dir=self.__mModelDir)
             self.__mModel.load_weights(self.__mModelPath, by_name=True)
@@ -114,12 +119,12 @@ class Segmentation:
                 masks[:, :, i] = cv2.dilate(masks[:, :, i], kernel=pDilationSElem)
 
         if pCavityFilling:
-            for i in range(count):
-                temp = cv2.bitwise_not(masks[:, :, i])
-                temp, _, _ = cv2.findContours(temp, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-                masks[:, :, i] = cv2.bitwise_not(temp)
 #            for i in range(count):
-#                masks[:, :, i] = scipy.ndimage.binary_fill_holes(masks[:, :, i])
+#                temp = cv2.bitwise_not(masks[:, :, i])
+#                temp, _, _ = cv2.findContours(temp, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+#                masks[:, :, i] = cv2.bitwise_not(temp)
+            for i in range(count):
+                masks[:, :, i] = scipy.ndimage.binary_fill_holes(masks[:, :, i])
 
         for i in range(count):
             masks[:, :, i] = numpy.where(masks[:, :, i] == 0, 0, 255)
@@ -218,6 +223,32 @@ os.makedirs(name=outputDir, exist_ok=True)
 if scoreDir is not None:
     os.makedirs(name=scoreDir, exist_ok=True)
 
+coco_output = {
+	"images" : [],
+	"annotations" : [],
+    "categories": [
+#        {
+#            "id": 0,
+#            "name": "background",
+#            "supercategory": "",
+#            "color": "",
+#            "metadata": {},
+#            "creator": "",
+#            "keypoint_colors": []
+#        },
+        {
+            "id": 1,
+            "name": "nucleus",
+            "supercategory": "",
+            "color": "",
+            "metadata": {},
+            "creator": "",
+            "keypoint_colors": []
+        }
+    ],
+}
+segmentation_id = 0
+
 imcount = len(imageFiles)
 for index, imageFile in enumerate(imageFiles):
     print("Image:", str(index + 1), "/", str(imcount), "(", imageFile, ")")
@@ -225,6 +256,10 @@ for index, imageFile in enumerate(imageFiles):
     baseName = os.path.splitext(os.path.basename(imageFile))[0]
     imagePath = os.path.join(imagesDir, imageFile)
     image = skimage.io.imread(imagePath)
+    image_id = index 
+    image_info = pycococreatortools.create_image_info(
+    image_id, baseName+".jpg",(image.shape[1], image.shape[0]) )
+    coco_output["images"].append(image_info)
 
     dilationStruct = None
     if dilate > 0:
@@ -243,14 +278,47 @@ for index, imageFile in enumerate(imageFiles):
     if count < 1:
         continue
 
-    skimage.io.imsave(os.path.join(outputDir, baseName + ".tiff"), mask)
+    #skimage.io.imsave(os.path.join(outputDir, baseName + ".tiff"), mask)
 
+    separate=True
     if separate:
         masksDir = os.path.join(outputDir, baseName, "masks")
         os.makedirs(name=masksDir, exist_ok=True)
+        mat = numpy.zeros((masks.shape[0], masks.shape[1]), dtype=numpy.uint8)
         for m in range(count):
             skimage.io.imsave(os.path.join(masksDir, str(m) + ".png"), masks[:, :, m])
+            mat += masks[:,:,m]
+            
+            if True:
+                class_id = 1 ##nucleus
 
+            category_info = {'id': class_id, 'is_crowd': False}
+            binary_mask = masks[:, :, m]
+            segmentation_id += 1
+            annotation_info = pycococreatortools.create_annotation_info(
+                        segmentation_id, image_id, category_info, binary_mask,
+                        (image.shape[1], image.shape[0]), tolerance=2)
+            if annotation_info is not None:
+                coco_output["annotations"].append(annotation_info)
+
+        skimage.io.imsave(os.path.join(masksDir, "all.png"), mat)
+        rgb_mask = cv2.cvtColor(mat,cv2.COLOR_GRAY2RGB)
+        rgb_mask[:,:,0] = 0
+        rgb_mask[:,:,2] = 0
+
+
+        rgb_img = cv2.imread(imagePath)
+#        if image.shape[-1] == 4:
+#            rgb_img = skimage.color.rgba2rgb(image)
+#        else:
+#            rgb_img = skimage.color.gray2rgb(image)
+#            rgb_img = image
+#        import pdb;pdb.set_trace()
+        overlay = rgb_img/2 + rgb_mask[:,:,::-1]/2
+        skimage.io.imsave(os.path.join(outputDir, baseName + "_overlay.png"), overlay[:,:,::-1])
+        cv2.imwrite(os.path.join(outputDir, baseName + "_ori.png"), rgb_img)
+
+    scoreDir = outputDir
     if scoreDir is not None:
         scoreFile = open(os.path.join(scoreDir, baseName + ".tsv"),"w")
         scoreFile.write("label\tscore\r\n")
@@ -258,12 +326,18 @@ for index, imageFile in enumerate(imageFiles):
             scoreFile.write(str(s+1) + "\t" + str(scores[s])+ "\r\n")
         scoreFile.close()
 
+    showOutputs = True
     if showOutputs:
         visualize.display_instances(image=image,
                                     boxes=utils.extract_bboxes(masks),
                                     masks=masks,
+                                    class_ids=numpy.array([1 for _ in range(count)]),
+                                    class_names=["BG", "nucleus"],
                                     scores=scores,
                                     title=baseName,
-                                    class_ids=numpy.array([1 for _ in range(count)]),
-                                    class_names=["BG", "nucleus"]
+                                    save_dir=outputDir,
+                                    file_name=baseName + ".jpg",
                                     )
+
+json_file = open(os.path.join(outputDir, "coco_anno.json"), 'w')
+json.dump(coco_output, json_file)

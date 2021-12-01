@@ -22,3 +22,4 @@ kaggle_workflow/inputs/train_unet/
 kaggle_workflow/inputs/validation/
 kaggle_workflow/outputs/
 HTMLresults/
+testImages/
